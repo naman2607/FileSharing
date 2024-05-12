@@ -13,6 +13,7 @@ const Room = () => {
   const peerRef = useRef<RTCPeerConnection>();
   const WebSocketRef = useRef<WebSocket>();
   const [allowUpload, setAllowUpload] = useState<boolean>(false);
+  let receivedData = [];
 
   useEffect(() => {
     const roomID = location.pathname.split("/");
@@ -94,9 +95,12 @@ const Room = () => {
       dc.binaryType = "arraybuffer";
 
       dc.onmessage = (event) => {
-        console.log("Received file data", event.data);
         const fileData = event.data;
-        saveFile(fileData); // Save the received file data
+        if(fileData === "FileTransferComplete"){
+          console.log("File transfer complete");
+          saveFile();
+        }
+        else receivedData.push(fileData)
       };
     };
 
@@ -110,9 +114,9 @@ const Room = () => {
     return peer;
   };
 
-  const saveFile = (fileData: ArrayBuffer) => {
+  const saveFile = () => {
 
-    const blob = new Blob([fileData], { type: fileDetails.filetype?fileDetails.filetype:"application/txt"});
+    const blob = new Blob(receivedData, { type: fileDetails.filetype?fileDetails.filetype:"application/txt"});
 
     const url = URL.createObjectURL(blob);
 
@@ -121,7 +125,7 @@ const Room = () => {
     link.download = fileDetails.filename?fileDetails.filename:"received_file"; 
     link.click();
 
-    URL.revokeObjectURL(url);
+    // URL.revokeObjectURL(url);
   };
 
   const handleNegotiationNeeded = async () => {
@@ -167,9 +171,12 @@ const Room = () => {
       dc.binaryType = "arraybuffer";
 
       dc.onmessage = (event) => {
-        console.log("Received file data", event.data);
         const fileData = event.data;
-        saveFile(fileData); // Save the received file data
+        if(fileData === "FileTransferComplete"){
+          console.log("File transfer complete");
+          saveFile();
+        }
+        else receivedData.push(fileData)
       };
     };
 
@@ -189,63 +196,33 @@ const Room = () => {
   };
   const sendFile = (tempfile: any) => {
     if (tempfile && dataChannel && dataChannel.readyState === "open") {
+      const chunkSize = 8 * 1024;
       console.log("sending file");
       const reader = new FileReader();
       reader.onload = () => {
-        const fileData = reader.result as ArrayBuffer;
+        const arrayBuffer = reader.result as ArrayBuffer;
 
-        dataChannel.send(fileData);
+        let offset = 0;
+      if(arrayBuffer.byteLength < chunkSize){
+        dataChannel.send(arrayBuffer)
+        return;
+      }
+
+      while (offset < arrayBuffer.byteLength) {
+        const chunk = arrayBuffer.slice(offset, offset + chunkSize);
+        console.log(chunk)
+        dataChannel.send(chunk);
+        offset += chunkSize;
+      }
+
+
+        dataChannel.send("FileTransferComplete");
       };
       reader.readAsArrayBuffer(tempfile);
     }
   };
 
-  //   const chunkSize = 65536;
-
-  // const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-  //   const file = event.target.files && event.target.files[0];
-  //   if (file) {
-  //     sendFileInChunks(file);
-  //   }
-  // };
-
-  // const sendFileInChunks = (file: File) => {
-  //   if (dataChannel?.readyState === "open") {
-  //     const reader = new FileReader();
-  //     let remaining = file.size;
-  //     let chunkNumber = 0;
-
-  //     reader.onload = (e) => {
-  //       if (e.target?.result) {
-  //         const chunk = e.target.result as ArrayBuffer;
-  //         dataChannel.send(createChunkData(chunkNumber, chunk));
-  //         remaining -= chunk.byteLength;
-  //         chunkNumber++;
-
-  //         if (remaining > 0) {
-  //           reader.readAsArrayBuffer(file.slice(chunkNumber * chunkSize, remaining + chunkSize));
-  //         } else {
-  //           console.log("File sent completely");
-  //         }
-  //       }
-  //     };
-
-  //     reader.readAsArrayBuffer(file.slice(0, chunkSize));
-  //   } else {
-  //     console.log("Data channel is not open");
-  //   }
-  // };
-
-  // const createChunkData = (chunkNumber: number, chunk: ArrayBuffer) => {
-  //     const buffer = new ArrayBuffer(chunkSize + 1);
-  //     const view = new DataView(buffer);
-  //     view.buffer[0] = chunkNumber;
-  //     const chunkArray = new Uint8Array(chunk);
-  //     for (let i = 0; i < chunkArray.length; i++) {
-  //       view.buffer[i + 1] = chunkArray[i];
-  //     }
-  //     return buffer;
-  //   };
+ 
   const getUploadFileUI = () => {
     if (allowUpload) {
       return (
