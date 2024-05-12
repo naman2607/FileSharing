@@ -117,7 +117,6 @@ const Room = () => {
   const saveFile = () => {
 
     const blob = new Blob(receivedData, { type: fileDetails.filetype?fileDetails.filetype:"application/txt"});
-
     const url = URL.createObjectURL(blob);
 
     const link = document.createElement("a");
@@ -222,7 +221,6 @@ const Room = () => {
     }
   };
 
- 
   const getUploadFileUI = () => {
     if (allowUpload) {
       return (
