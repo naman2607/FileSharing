@@ -1,13 +1,18 @@
 import React from "react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
-
+import "./Room.css";
+let fileToSend: File
+let dataChannel: RTCDataChannel;
+let fileDetails = {
+  filetype : null,
+  filename: null
+}
 const Room = () => {
   const location = useLocation();
   const peerRef = useRef<RTCPeerConnection>();
   const WebSocketRef = useRef<WebSocket>();
-  const [fileToSend, setFileToSend] = useState<File | null>(null);
-  const [dataChannel, setDataChannel] = useState<any>(null);
+  const [allowUpload, setAllowUpload] = useState<boolean>(false);
 
   useEffect(() => {
     const roomID = location.pathname.split("/");
@@ -41,69 +46,81 @@ const Room = () => {
           console.log("error ICE CANDIDADE");
         }
       }
+      if(message.filetype){
+        fileDetails = {
+          filename:message.filename,
+          filetype:message.filetype
+        }
+        WebSocketRef.current?.send(JSON.stringify({readytosend:true}))
+      }
+      if(message.readytosend){
+        sendFile(fileToSend);
+      }
+
     });
 
     return () => {};
   }, []);
 
+
+
   const createPeer = () => {
     console.log("Creating peer connection");
     const peer = new RTCPeerConnection({
-        iceServers: [
-            {
-              urls: "stun:stun.l.google.com:19302",
-            },
-          ]
+      iceServers: [
+        {
+          urls: "stun:stun.l.google.com:19302",
+        },
+      ],
     });
 
     const dc = peer.createDataChannel("file-transfer");
-    dc.binaryType = "arraybuffer"
-    dc.onopen = (e) =>{
-        console.log("Data channel is opened");
-        // sendFile();
-    }
+    dc.binaryType = "arraybuffer";
+    dc.onopen = (e) => {
+      console.log("Data channel is opened");
+      if(dc.readyState === "open")
+         setAllowUpload(true)
+      // sendFile();
+    };
 
     dc.onmessage = (e) => {
-        console.log("Data channel message", e);
-    }
+      console.log("Data channel message", e);
+    };
+
 
     peer.ondatachannel = (event) => {
-        console.log("Data channel created by local peer");
-        const dataChannel = event.channel;
-        dataChannel.binaryType = "arraybuffer";
-  
-        dataChannel.onmessage = (event) => {
-          console.log("Received file data", event.data);
-          const fileData = event.data;
-          saveFile(fileData); // Save the received file data
-        };
+      console.log("Data channel created by local peer");
+      const dc = event.channel;
+      dc.binaryType = "arraybuffer";
+
+      dc.onmessage = (event) => {
+        console.log("Received file data", event.data);
+        const fileData = event.data;
+        saveFile(fileData); // Save the received file data
       };
+    };
 
-
-    setDataChannel(dc);
+    dataChannel = dc;
     peer.onnegotiationneeded = handleNegotiationNeeded;
     peer.onicecandidate = handleIceCandidateEvent;
     peer.onicecandidateerror = (e) => {
-        console.log("Error in ice candidate ", e)
-    }
+      console.log("Error in ice candidate ", e);
+    };
 
     return peer;
   };
 
   const saveFile = (fileData: ArrayBuffer) => {
-    // Convert ArrayBuffer to Blob
-    const blob = new Blob([fileData],{ type: 'video/mp4' });
 
-    // Create a temporary URL for the Blob
+    const blob = new Blob([fileData], { type: fileDetails.filetype?fileDetails.filetype:"application/txt"});
+
     const url = URL.createObjectURL(blob);
 
-    // Create a link element to download the file
     const link = document.createElement("a");
     link.href = url;
-    link.download = "received_file"; // Set the file name here
+    link.download = fileDetails.filename?fileDetails.filename:"received_file"; 
     link.click();
 
-    // Clean up by revoking the temporary URL
     URL.revokeObjectURL(url);
   };
 
@@ -131,8 +148,6 @@ const Room = () => {
   const callUser = () => {
     console.log("calling other users");
     peerRef.current = createPeer();
-    console.log("call user peer ", peerRef.current)
-    // handleNegotiationNeeded();
   };
 
   const handleOffer = async (offer: any) => {
@@ -147,16 +162,16 @@ const Room = () => {
     await peerRef.current.setLocalDescription(answer);
 
     peerRef.current.ondatachannel = (event) => {
-        console.log("Data channel created by remote peer");
-        const dataChannel = event.channel;
-        dataChannel.binaryType = "arraybuffer";
-  
-        dataChannel.onmessage = (event) => {
-          console.log("Received file data", event.data);
-          const fileData = event.data;
-          saveFile(fileData); // Save the received file data
-        };
+      console.log("Data channel created by remote peer");
+      const dc = event.channel;
+      dc.binaryType = "arraybuffer";
+
+      dc.onmessage = (event) => {
+        console.log("Received file data", event.data);
+        const fileData = event.data;
+        saveFile(fileData); // Save the received file data
       };
+    };
 
     WebSocketRef.current?.send(
       JSON.stringify({ answer: peerRef.current.localDescription })
@@ -166,99 +181,92 @@ const Room = () => {
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files && event.target.files[0];
     if (file) {
-      sendFile(file)
+      WebSocketRef.current?.send(
+        JSON.stringify({filename:file.name, filetype:file.type})
+      )
+      fileToSend = file
     }
   };
-  const sendFile = (tempfile : File) => {
+  const sendFile = (tempfile: any) => {
     if (tempfile && dataChannel && dataChannel.readyState === "open") {
-        console.log("sending file");
+      console.log("sending file");
       const reader = new FileReader();
       reader.onload = () => {
         const fileData = reader.result as ArrayBuffer;
-        dataChannel.send(fileData); 
+
+        dataChannel.send(fileData);
       };
       reader.readAsArrayBuffer(tempfile);
     }
   };
 
-//   const chunkSize = 65536; 
+  //   const chunkSize = 65536;
 
-// const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-//   const file = event.target.files && event.target.files[0];
-//   if (file) {
-//     sendFileInChunks(file);
-//   }
-// };
+  // const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  //   const file = event.target.files && event.target.files[0];
+  //   if (file) {
+  //     sendFileInChunks(file);
+  //   }
+  // };
 
-// const sendFileInChunks = (file: File) => {
-//   if (dataChannel?.readyState === "open") {
-//     const reader = new FileReader();
-//     let remaining = file.size;
-//     let chunkNumber = 0;
+  // const sendFileInChunks = (file: File) => {
+  //   if (dataChannel?.readyState === "open") {
+  //     const reader = new FileReader();
+  //     let remaining = file.size;
+  //     let chunkNumber = 0;
 
-//     reader.onload = (e) => {
-//       if (e.target?.result) {
-//         const chunk = e.target.result as ArrayBuffer;
-//         dataChannel.send(createChunkData(chunkNumber, chunk));
-//         remaining -= chunk.byteLength;
-//         chunkNumber++;
+  //     reader.onload = (e) => {
+  //       if (e.target?.result) {
+  //         const chunk = e.target.result as ArrayBuffer;
+  //         dataChannel.send(createChunkData(chunkNumber, chunk));
+  //         remaining -= chunk.byteLength;
+  //         chunkNumber++;
 
-//         if (remaining > 0) {
-//           reader.readAsArrayBuffer(file.slice(chunkNumber * chunkSize, remaining + chunkSize));
-//         } else {
-//           console.log("File sent completely");
-//         }
-//       }
-//     };
+  //         if (remaining > 0) {
+  //           reader.readAsArrayBuffer(file.slice(chunkNumber * chunkSize, remaining + chunkSize));
+  //         } else {
+  //           console.log("File sent completely");
+  //         }
+  //       }
+  //     };
 
-//     reader.readAsArrayBuffer(file.slice(0, chunkSize));
-//   } else {
-//     console.log("Data channel is not open");
-//   }
-// };
+  //     reader.readAsArrayBuffer(file.slice(0, chunkSize));
+  //   } else {
+  //     console.log("Data channel is not open");
+  //   }
+  // };
 
-// const createChunkData = (chunkNumber: number, chunk: ArrayBuffer) => {
-//     const buffer = new ArrayBuffer(chunkSize + 1);
-//     const view = new DataView(buffer);
-//     view.buffer[0] = chunkNumber; 
-//     const chunkArray = new Uint8Array(chunk);
-//     for (let i = 0; i < chunkArray.length; i++) {
-//       view.buffer[i + 1] = chunkArray[i]; 
-//     }
-//     return buffer;
-//   };
-
-
+  // const createChunkData = (chunkNumber: number, chunk: ArrayBuffer) => {
+  //     const buffer = new ArrayBuffer(chunkSize + 1);
+  //     const view = new DataView(buffer);
+  //     view.buffer[0] = chunkNumber;
+  //     const chunkArray = new Uint8Array(chunk);
+  //     for (let i = 0; i < chunkArray.length; i++) {
+  //       view.buffer[i + 1] = chunkArray[i];
+  //     }
+  //     return buffer;
+  //   };
+  const getUploadFileUI = () => {
+    if (allowUpload) {
+      return (
+        <>
+          <span className="drop-title">Drop files here</span>
+          or
+          <input
+            type="file"
+            id="images"
+            onChange={(e) => handleFileChange(e)}
+            required
+          />
+        </>
+      );
+    } else return <div className="DefaultMsg">Wait for others to join room ....</div>;
+  };
   return (
-    <div>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: "200px",
-          width: "100%",
-        }}
-      >
-        <h1>Golang {"&"} React</h1>
-      </div>
-
-      {/* <div
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          top: "100px",
-          right: "100px",
-          borderRadius: "10px",
-          overflow: "hidden",
-        }}
-      ></div> */}
-
-      <div>
-      <label>Select a file:</label>
-      <input type="file" id="myfile" name="myfile" onChange={(e) => handleFileChange(e)}/>
-      </div>
+    <div className="Room">
+      <label className="drop-container" id="dropcontainer">
+        {getUploadFileUI()}
+      </label>
     </div>
   );
 };

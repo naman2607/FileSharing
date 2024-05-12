@@ -1,5 +1,5 @@
 import {BrowserRouter, Route, Routes, } from "react-router-dom";
-
+import './Main.css'
 import CreateRoom from './components/CreateRoom.tsx';
 import Room from "./components/Room.tsx";
 
