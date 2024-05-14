@@ -41,11 +41,13 @@ func broadcaster() {
 		msg := <-broadcast
 		for _, client := range AllRooms.Map[msg.RoomID] {
 			if client.Conn != msg.Client {
+				client.Mutex.Lock()
 				err := client.Conn.WriteJSON(msg.Message)
 				if err != nil {
 					log.Fatal(err)
 					client.Conn.Close()
 				}
+				client.Mutex.Unlock()
 			}
 		}
 	}
@@ -74,7 +76,11 @@ func JoinRoomRequestHandler(w http.ResponseWriter, r *http.Request) {
 		err := ws.ReadJSON(&msg.Message)
 
 		if err != nil {
-
+			if websocket.IsCloseError(err, websocket.CloseGoingAway) {
+				log.Println("WebSocket connection closed:", err)
+				AllRooms.DeleteFromRoom(roomID[0], ws)
+				break
+			}
 			log.Fatal("Read Error ", err)
 		}
 

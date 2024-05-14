@@ -1,19 +1,24 @@
 import React from "react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
+import ProgressBar from "@ramonak/react-progress-bar";
 import "./Room.css";
-let fileToSend: File
+let fileToSend: File;
 let dataChannel: RTCDataChannel;
 let fileDetails = {
-  filetype : null,
-  filename: null
-}
+  filetype: null,
+  filename: null,
+  filesize: 0,
+};
+let receivedData: ArrayBuffer[] = [];
+const chunkSize = 100 * 1024; //100kb;
+
 const Room = () => {
   const location = useLocation();
   const peerRef = useRef<RTCPeerConnection>();
   const WebSocketRef = useRef<WebSocket>();
+  const [fileCompletion, setFileCompletion] = useState<number>(0);
   const [allowUpload, setAllowUpload] = useState<boolean>(false);
-  let receivedData = [];
 
   useEffect(() => {
     const roomID = location.pathname.split("/");
@@ -35,9 +40,13 @@ const Room = () => {
       }
       if (message.answer) {
         console.log("Received answer");
-        peerRef.current?.setRemoteDescription(
-          new RTCSessionDescription(message.answer)
-        );
+        if (peerRef.current?.localDescription) {
+          peerRef.current?.setRemoteDescription(
+            new RTCSessionDescription(message.answer)
+          );
+        } else {
+          callUser();
+        }
       }
       if (message.iceCandidate) {
         console.log("Receiving and Adding ICE Candidate");
@@ -47,23 +56,21 @@ const Room = () => {
           console.log("error ICE CANDIDADE");
         }
       }
-      if(message.filetype){
+      if (message.filetype) {
         fileDetails = {
-          filename:message.filename,
-          filetype:message.filetype
-        }
-        WebSocketRef.current?.send(JSON.stringify({readytosend:true}))
+          filename: message.filename,
+          filetype: message.filetype,
+          filesize: message.filesize,
+        };
+        WebSocketRef.current?.send(JSON.stringify({ readytosend: true }));
       }
-      if(message.readytosend){
+      if (message.readytosend) {
         sendFile(fileToSend);
       }
-
     });
 
     return () => {};
   }, []);
-
-
 
   const createPeer = () => {
     console.log("Creating peer connection");
@@ -79,15 +86,13 @@ const Room = () => {
     dc.binaryType = "arraybuffer";
     dc.onopen = (e) => {
       console.log("Data channel is opened");
-      if(dc.readyState === "open")
-         setAllowUpload(true)
+      if (dc.readyState === "open") setAllowUpload(true);
       // sendFile();
     };
 
     dc.onmessage = (e) => {
       console.log("Data channel message", e);
     };
-
 
     peer.ondatachannel = (event) => {
       console.log("Data channel created by local peer");
@@ -96,11 +101,12 @@ const Room = () => {
 
       dc.onmessage = (event) => {
         const fileData = event.data;
-        if(fileData === "FileTransferComplete"){
+        if (fileData === "FileTransferComplete") {
           console.log("File transfer complete");
           saveFile();
+        } else {
+          receivedData.push(fileData);
         }
-        else receivedData.push(fileData)
       };
     };
 
@@ -115,13 +121,16 @@ const Room = () => {
   };
 
   const saveFile = () => {
-
-    const blob = new Blob(receivedData, { type: fileDetails.filetype?fileDetails.filetype:"application/txt"});
+    const blob = new Blob(receivedData, {
+      type: fileDetails.filetype ? fileDetails.filetype : "application/txt",
+    });
     const url = URL.createObjectURL(blob);
 
     const link = document.createElement("a");
     link.href = url;
-    link.download = fileDetails.filename?fileDetails.filename:"received_file"; 
+    link.download = fileDetails.filename
+      ? fileDetails.filename
+      : "received_file";
     link.click();
 
     // URL.revokeObjectURL(url);
@@ -171,16 +180,17 @@ const Room = () => {
 
       dc.onmessage = (event) => {
         const fileData = event.data;
-        if(fileData === "FileTransferComplete"){
+        if (fileData === "FileTransferComplete") {
           console.log("File transfer complete");
           saveFile();
+        } else {
+          receivedData.push(fileData);
         }
-        else receivedData.push(fileData)
       };
     };
 
     WebSocketRef.current?.send(
-      JSON.stringify({ answer: peerRef.current.localDescription })
+      JSON.stringify({ answer: peerRef.current?.localDescription })
     );
   };
 
@@ -188,34 +198,42 @@ const Room = () => {
     const file = event.target.files && event.target.files[0];
     if (file) {
       WebSocketRef.current?.send(
-        JSON.stringify({filename:file.name, filetype:file.type})
-      )
-      fileToSend = file
+        JSON.stringify({
+          filename: file.name,
+          filetype: file.type,
+          filesize: file.size,
+        })
+      );
+      fileToSend = file;
     }
   };
   const sendFile = (tempfile: any) => {
     if (tempfile && dataChannel && dataChannel.readyState === "open") {
-      const chunkSize = 8 * 1024;
       console.log("sending file");
       const reader = new FileReader();
       reader.onload = () => {
         const arrayBuffer = reader.result as ArrayBuffer;
 
         let offset = 0;
-      if(arrayBuffer.byteLength < chunkSize){
-        dataChannel.send(arrayBuffer)
-        return;
-      }
-
-      while (offset < arrayBuffer.byteLength) {
-        const chunk = arrayBuffer.slice(offset, offset + chunkSize);
-        console.log(chunk)
-        dataChannel.send(chunk);
-        offset += chunkSize;
-      }
-
-
-        dataChannel.send("FileTransferComplete");
+        const sendNextChunk = () => {
+          if (dataChannel && dataChannel.readyState === "open") {
+            const chunk = arrayBuffer.slice(offset, offset + chunkSize);
+            dataChannel.send(chunk);
+            offset += chunkSize;
+            let completionPercentage = Math.floor(
+              (offset / arrayBuffer.byteLength) * 100
+            );
+            completionPercentage = Math.min(100, completionPercentage);
+            setFileCompletion(completionPercentage);
+            if (offset < arrayBuffer.byteLength) {
+              setTimeout(sendNextChunk, 10);
+            } else {
+              // File transmission complete
+              dataChannel.send("FileTransferComplete");
+            }
+          }
+        };
+        sendNextChunk();
       };
       reader.readAsArrayBuffer(tempfile);
     }
@@ -233,9 +251,18 @@ const Room = () => {
             onChange={(e) => handleFileChange(e)}
             required
           />
+          <div className="progressBar">
+            <ProgressBar
+              completed={fileCompletion}
+              maxCompleted={100}
+            />
+          </div>
         </>
       );
-    } else return <div className="DefaultMsg">Wait for others to join room ....</div>;
+    } else
+      return (
+        <div className="DefaultMsg">Wait for others to join room ....</div>
+      );
   };
   return (
     <div className="Room">
