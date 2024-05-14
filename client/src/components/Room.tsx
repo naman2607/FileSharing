@@ -23,7 +23,7 @@ const Room = () => {
   useEffect(() => {
     const roomID = location.pathname.split("/");
     WebSocketRef.current = new WebSocket(
-      `ws://172.20.10.2:8084/join?roomID=${roomID[2]}`
+      `ws://localhost:8084/join?roomID=${roomID[2]}`
     );
 
     WebSocketRef.current?.addEventListener("open", () => {
@@ -253,9 +253,6 @@ const Room = () => {
           />
           <div className="progressBar">
             <ProgressBar
-              // className="progressbar"
-              // barContainerClassName="progressbar-container"
-              // completedClassName="progressbar-barCompleted"
               completed={fileCompletion}
               maxCompleted={100}
             />
